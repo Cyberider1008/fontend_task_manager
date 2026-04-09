@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import './App.css';
+import { API } from './api';
 
 const initialTask = {
   title: '',
@@ -26,33 +27,22 @@ function App() {
     }
   }, [token]);
 
-  const requestHeaders = (hasJson = true) => {
-    const headers = {};
-    if (hasJson) headers['Content-Type'] = 'application/json';
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    return headers;
-  };
-
   const handleAuthChange = (e) => {
     setAuthForm({ ...authForm, [e.target.name]: e.target.value });
   };
 
   const login = async (credentials) => {
-    const response = await fetch('/api/login/', {
-      method: 'POST',
-      headers: requestHeaders(),
-      body: JSON.stringify(credentials),
-    });
-    const data = await response.json();
-    if (response.ok) {
+    try {
+      const data = await API.login(credentials);
       localStorage.setItem('accessToken', data.access);
       setToken(data.access);
       setMessage('Logged in successfully.');
       setError('');
       return true;
+    } catch (err) {
+      setError(err.message || 'Login failed.');
+      return false;
     }
-    setError(data.detail || 'Login failed');
-    return false;
   };
 
   const handleAuthSubmit = async (e) => {
@@ -60,37 +50,27 @@ function App() {
     setMessage('');
     setError('');
 
-    if (authType === 'register') {
-      const response = await fetch('/api/register/', {
-        method: 'POST',
-        headers: requestHeaders(),
-        body: JSON.stringify(authForm),
-      });
-      const data = await response.json();
-      if (response.ok) {
+    try {
+      if (authType === 'register') {
+        await API.register(authForm);
         await login(authForm);
-      } else {
-        setError(data.username || data.password || JSON.stringify(data));
+        return;
       }
-      return;
-    }
 
-    await login(authForm);
+      await login(authForm);
+    } catch (err) {
+      setError(err.message || 'Authentication failed.');
+    }
   };
 
   const fetchTasks = async () => {
+    setError('');
+
     try {
-      const response = await fetch('/api/tasks/', {
-        headers: requestHeaders(false),
-      });
-      if (!response.ok) {
-        throw new Error('Unable to load tasks');
-      }
-      const data = await response.json();
-      setTasks(data);
-      setError('');
+      const data = await API.getTasks(token);
+      setTasks(data || []);
     } catch (err) {
-      setError(err.message);
+      setError(err.message || 'Unable to load tasks.');
     }
   };
 
@@ -115,23 +95,19 @@ function App() {
       payload.assignee = Number(taskForm.assignee);
     }
 
-    const method = selectedTaskId ? 'PUT' : 'POST';
-    const url = selectedTaskId ? `/api/tasks/${selectedTaskId}/` : '/api/tasks/';
-
-    const response = await fetch(url, {
-      method,
-      headers: requestHeaders(),
-      body: JSON.stringify(payload),
-    });
-
-    const data = await response.json();
-    if (response.ok) {
-      setMessage(selectedTaskId ? 'Task updated.' : 'Task created.');
+    try {
+      if (selectedTaskId) {
+        await API.updateTask(selectedTaskId, payload, token);
+        setMessage('Task updated.');
+      } else {
+        await API.createTask(payload, token);
+        setMessage('Task created.');
+      }
       setTaskForm(initialTask);
       setSelectedTaskId(null);
       fetchTasks();
-    } else {
-      setError(data.detail || JSON.stringify(data));
+    } catch (err) {
+      setError(err.message || 'Task submission failed.');
     }
   };
 
@@ -151,16 +127,13 @@ function App() {
 
   const handleDeleteTask = async (taskId) => {
     if (!window.confirm('Delete this task?')) return;
-    const response = await fetch(`/api/tasks/${taskId}/`, {
-      method: 'DELETE',
-      headers: requestHeaders(false),
-    });
-    if (response.ok) {
+
+    try {
+      await API.deleteTask(taskId, token);
       setMessage('Task deleted.');
       fetchTasks();
-    } else {
-      const data = await response.json();
-      setError(data.detail || 'Delete failed');
+    } catch (err) {
+      setError(err.message || 'Delete failed.');
     }
   };
 
@@ -171,6 +144,7 @@ function App() {
     setTaskForm(initialTask);
     setSelectedTaskId(null);
     setMessage('Logged out.');
+    setError('');
   };
 
   if (!token) {
@@ -217,7 +191,15 @@ function App() {
         <section className="task-panel">
           <div className="panel-header">
             <h2>{selectedTaskId ? 'Edit Task' : 'Create Task'}</h2>
-            <button className="secondary" onClick={() => { setSelectedTaskId(null); setTaskForm(initialTask); setMessage(''); setError(''); }}>
+            <button
+              className="secondary"
+              onClick={() => {
+                setSelectedTaskId(null);
+                setTaskForm(initialTask);
+                setMessage('');
+                setError('');
+              }}
+            >
               New
             </button>
           </div>
@@ -252,7 +234,14 @@ function App() {
             </label>
             <label>
               Assignee ID
-              <input name="assignee" type="number" min="1" value={taskForm.assignee} onChange={handleTaskChange} placeholder="Optional user ID" />
+              <input
+                name="assignee"
+                type="number"
+                min="1"
+                value={taskForm.assignee}
+                onChange={handleTaskChange}
+                placeholder="Optional user ID"
+              />
             </label>
             <button type="submit">{selectedTaskId ? 'Save changes' : 'Create task'}</button>
           </form>
